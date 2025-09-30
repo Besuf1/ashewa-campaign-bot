@@ -2,10 +2,8 @@ import os
 import logging
 import sqlite3
 from datetime import datetime, timedelta
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Updater, CommandHandler, CallbackContext, CallbackQueryHandler
-import schedule
-import time
+from telegram import Update
+from telegram.ext import Application, CommandHandler, ContextTypes
 
 # Enable logging
 logging.basicConfig(
@@ -17,36 +15,16 @@ logger = logging.getLogger(__name__)
 class AshewaCampaignBot:
     def __init__(self):
         self.token = os.getenv('ASHEWA_BOT_TOKEN')
+        logger.info(f"Bot token loaded: {'Yes' if self.token else 'No'}")
+        
         if not self.token:
             logger.error("❌ ASHEWA_BOT_TOKEN not found!")
             raise ValueError("Please set ASHEWA_BOT_TOKEN environment variable")
         
-        self.updater = Updater(self.token, use_context=True)
-        self.dispatcher = self.updater.dispatcher
+        # Create Application instance (new in v20+)
+        self.application = Application.builder().token(self.token).build()
         self.setup_handlers()
         self.init_db()
-        
-        # Campaign data
-        self.campaign_data = {
-            'revenue_target': 131000000,
-            'campaigns': [
-                {
-                    'name': 'Bundled Packages',
-                    'budget': 2500000,
-                    'kpi': '20 ERP deals = 40M Br',
-                    'timeline': '2 weeks',
-                    'team': 'Sales Team'
-                },
-                {
-                    'name': 'Brand Campaign', 
-                    'budget': 4000000,
-                    'kpi': '1M reach, 2K MQLs, 15K calls',
-                    'timeline': '2 weeks', 
-                    'team': 'Marketing Team'
-                }
-            ]
-        }
-        
         logger.info("🤖 Ashewa Campaign Bot Initialized!")
 
     def init_db(self):
@@ -55,23 +33,30 @@ class AshewaCampaignBot:
         c = conn.cursor()
         c.execute('''CREATE TABLE IF NOT EXISTS campaign_progress
                      (id INTEGER PRIMARY KEY, start_date TEXT, current_revenue REAL, updated_at TEXT)''')
-        conn.commit()
+        
+        # Initialize if empty
+        c.execute("SELECT * FROM campaign_progress LIMIT 1")
+        if not c.fetchone():
+            start_date = datetime.now().strftime("%Y-%m-%d")
+            c.execute("INSERT INTO campaign_progress (start_date, current_revenue, updated_at) VALUES (?, ?, ?)",
+                     (start_date, 0, datetime.now().strftime("%Y-%m-%d")))
+            conn.commit()
         conn.close()
 
     def setup_handlers(self):
         """Setup bot command handlers"""
-        self.dispatcher.add_handler(CommandHandler("start", self.start))
-        self.dispatcher.add_handler(CommandHandler("campaign", self.show_campaign))
-        self.dispatcher.add_handler(CommandHandler("progress", self.show_progress))
-        self.dispatcher.add_handler(CommandHandler("targets", self.show_targets))
-        self.dispatcher.add_handler(CommandHandler("revenue", self.show_revenue))
-        self.dispatcher.add_handler(CommandHandler("milestone", self.next_milestone))
-        self.dispatcher.add_handler(CommandHandler("motivate", self.send_motivation))
+        self.application.add_handler(CommandHandler("start", self.start))
+        self.application.add_handler(CommandHandler("campaign", self.show_campaign))
+        self.application.add_handler(CommandHandler("progress", self.show_progress))
+        self.application.add_handler(CommandHandler("targets", self.show_targets))
+        self.application.add_handler(CommandHandler("revenue", self.show_revenue))
+        self.application.add_handler(CommandHandler("milestone", self.next_milestone))
+        self.application.add_handler(CommandHandler("motivate", self.send_motivation))
 
     def get_db_connection(self):
         return sqlite3.connect('ashewa_campaign.db')
 
-    def start(self, update: Update, context: CallbackContext):
+    async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Start command - initialize campaign"""
         welcome_message = """
 🏁 **ASHEWA 90-DAY MARKETING CAMPAIGN TRACKER** 🏁
@@ -92,34 +77,46 @@ class AshewaCampaignBot:
 *Let's build Ethiopia's digital future together!* 🇪🇹
         """
         
-        # Initialize campaign if not exists
-        conn = self.get_db_connection()
-        c = conn.cursor()
-        c.execute("SELECT * FROM campaign_progress LIMIT 1")
-        if not c.fetchone():
-            start_date = datetime.now().strftime("%Y-%m-%d")
-            c.execute("INSERT INTO campaign_progress (start_date, current_revenue, updated_at) VALUES (?, ?, ?)",
-                     (start_date, 0, datetime.now().strftime("%Y-%m-%d")))
-            conn.commit()
-        
-        conn.close()
-        
-        update.message.reply_text(welcome_message, parse_mode='Markdown')
+        await update.message.reply_text(welcome_message, parse_mode='Markdown')
 
-    def show_campaign(self, update: Update, context: CallbackContext):
+    async def show_campaign(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Show all marketing campaigns"""
+        campaign_data = [
+            {
+                'name': 'Bundled Packages',
+                'budget': 2500000,
+                'kpi': '20 ERP deals = 40M Br',
+                'timeline': '2 weeks',
+                'team': 'Sales Team'
+            },
+            {
+                'name': 'Brand Campaign',
+                'budget': 4000000, 
+                'kpi': '1M reach, 2K MQLs, 15K calls',
+                'timeline': '2 weeks',
+                'team': 'Marketing Team'
+            },
+            {
+                'name': 'ABM Top 100 Enterprises',
+                'budget': 3000000,
+                'kpi': '20 enterprise + 8 govt contracts = 80M Br',
+                'timeline': '60 days',
+                'team': 'BD Team'
+            }
+        ]
+        
         campaign_msg = "🎯 **ASHEWA 90-DAY MARKETING CAMPAIGNS**\n\n"
         
-        for i, campaign in enumerate(self.campaign_data['campaigns'], 1):
+        for i, campaign in enumerate(campaign_data, 1):
             campaign_msg += f"**{i}. {campaign['name']}**\n"
             campaign_msg += f"   💰 Budget: {campaign['budget']:,} Br\n"
             campaign_msg += f"   🎯 KPI: {campaign['kpi']}\n"
             campaign_msg += f"   ⏰ Timeline: {campaign['timeline']}\n"
             campaign_msg += f"   👥 Team: {campaign['team']}\n\n"
         
-        update.message.reply_text(campaign_msg, parse_mode='Markdown')
+        await update.message.reply_text(campaign_msg, parse_mode='Markdown')
 
-    def show_progress(self, update: Update, context: CallbackContext):
+    async def show_progress(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Show overall campaign progress"""
         conn = self.get_db_connection()
         c = conn.cursor()
@@ -137,32 +134,32 @@ class AshewaCampaignBot:
         
         days_remaining = 90 - days_passed
         progress_percent = (days_passed / 90) * 100
-        revenue_percent = (current_revenue / self.campaign_data['revenue_target']) * 100
+        revenue_percent = (current_revenue / 131000000) * 100
+        
+        # Create progress bar
+        bars = 20
+        filled_bars = int((progress_percent / 100) * bars)
+        empty_bars = bars - filled_bars
+        progress_bar = "▓" * filled_bars + "░" * empty_bars + f" {progress_percent:.1f}%"
         
         progress_msg = f"""
 ⏰ **90-DAY CAMPAIGN PROGRESS**
 
 📅 **Time Progress:** {days_passed}/90 days ({progress_percent:.1f}%)
-💰 **Revenue Progress:** {current_revenue:,.0f} Br / {self.campaign_data['revenue_target']:,.0f} Br ({revenue_percent:.1f}%)
+💰 **Revenue Progress:** {current_revenue:,.0f} Br / 131,000,000 Br ({revenue_percent:.1f}%)
 ⏳ **Days Remaining:** {days_remaining}
 
-{self.create_progress_bar(progress_percent)}
+{progress_bar}
 
 **Quick Stats:**
-• Daily Revenue Target: {self.campaign_data['revenue_target']/90:,.0f} Br/day
-• Revenue Needed: {self.campaign_data['revenue_target'] - current_revenue:,.0f} Br
+• Daily Revenue Target: {131000000/90:,.0f} Br/day
+• Revenue Needed: {131000000 - current_revenue:,.0f} Br
         """
         
-        update.message.reply_text(progress_msg, parse_mode='Markdown')
+        await update.message.reply_text(progress_msg, parse_mode='Markdown')
         conn.close()
 
-    def create_progress_bar(self, percentage):
-        bars = 20
-        filled_bars = int((percentage / 100) * bars)
-        empty_bars = bars - filled_bars
-        return f"▓" * filled_bars + f"░" * empty_bars + f" {percentage:.1f}%"
-
-    def show_targets(self, update: Update, context: CallbackContext):
+    async def show_targets(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Show team targets"""
         targets_msg = """
 👥 **TEAM DAILY TARGETS**
@@ -179,35 +176,40 @@ class AshewaCampaignBot:
 📋 Schedule 5-10 C-level demos
 🎯 Weekly: Close 1-2 enterprise deals
 
+**Account Managers:**
+📋 Call 15-20 existing clients  
+🎯 Weekly: 5 client upsells
+
 **All Teams: Push for 131M Br target! 💪**
         """
-        update.message.reply_text(targets_msg, parse_mode='Markdown')
+        await update.message.reply_text(targets_msg, parse_mode='Markdown')
 
-    def show_revenue(self, update: Update, context: CallbackContext):
+    async def show_revenue(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Show revenue tracking"""
         conn = self.get_db_connection()
         c = conn.cursor()
         
         c.execute("SELECT current_revenue FROM campaign_progress LIMIT 1")
-        current_revenue = c.fetchone()[0] if c.fetchone() else 0
+        result = c.fetchone()
+        current_revenue = result[0] if result else 0
         
         revenue_msg = f"""
 💰 **REVENUE TRACKING**
 
 **Overall Target:** 131,000,000 Br
 **Current Revenue:** {current_revenue:,.0f} Br
-**Remaining:** {self.campaign_data['revenue_target'] - current_revenue:,.0f} Br
-**Completion:** {(current_revenue/self.campaign_data['revenue_target'])*100:.1f}%
+**Remaining:** {131000000 - current_revenue:,.0f} Br
+**Completion:** {(current_revenue/131000000)*100:.1f}%
 
-**Daily Target:** {self.campaign_data['revenue_target']/90:,.0f} Br/day
+**Daily Target:** {131000000/90:,.0f} Br/day
 
 *Keep pushing! Every deal counts!* 🚀
         """
         
-        update.message.reply_text(revenue_msg, parse_mode='Markdown')
+        await update.message.reply_text(revenue_msg, parse_mode='Markdown')
         conn.close()
 
-    def next_milestone(self, update: Update, context: CallbackContext):
+    async def next_milestone(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Show next milestones"""
         conn = self.get_db_connection()
         c = conn.cursor()
@@ -248,10 +250,10 @@ class AshewaCampaignBot:
         else:
             milestone_msg = "🎉 All milestones completed! Campaign finished!"
         
-        update.message.reply_text(milestone_msg, parse_mode='Markdown')
+        await update.message.reply_text(milestone_msg, parse_mode='Markdown')
         conn.close()
 
-    def send_motivation(self, update: Update, context: CallbackContext):
+    async def send_motivation(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Send motivational messages"""
         motivations = [
             "🚀 **Together, we build our future!** Keep pushing for Ethiopia's digital transformation!",
@@ -263,23 +265,25 @@ class AshewaCampaignBot:
         
         import random
         motivation = random.choice(motivations)
-        update.message.reply_text(motivation, parse_mode='Markdown')
+        await update.message.reply_text(motivation, parse_mode='Markdown')
 
     def run(self):
         """Start the bot"""
-        logger.info("🚀 Ashewa Campaign Bot Started!")
-        self.updater.start_polling()
-        self.updater.idle()
+        logger.info("🚀 Starting Ashewa Campaign Bot...")
+        self.application.run_polling()
+        logger.info("✅ Bot is now running and polling!")
 
 def main():
+    logger.info("=== ASHEWA BOT STARTING ===")
     try:
         bot = AshewaCampaignBot()
         bot.run()
     except Exception as e:
-        logger.error(f"Failed to start bot: {e}")
+        logger.error(f"❌ Bot failed to start: {e}")
         # Keep process alive for Railway
+        import time
         while True:
-            time.sleep(3600)
+            time.sleep(60)
 
 if __name__ == '__main__':
     main()
